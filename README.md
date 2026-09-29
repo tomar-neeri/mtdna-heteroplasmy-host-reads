@@ -25,7 +25,7 @@ nasopharyngeal swabs are not the relevant tissue for the cancers that motivated
 the wider project.
 
 **Cohort:** 47 nasopharyngeal swabs from unselected adults, Nagpur, India.
-Paired-end Illumina sequencing, processed through CZ ID.
+
 
 ---
 
