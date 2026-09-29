@@ -170,10 +170,6 @@ is identical.
 If you use this pipeline, please cite the manuscript and this deposit.
 
 ```
-[Authors]. Repurposing shotgun metagenomic human host reads for mitochondrial
-heteroplasmy detection: a proof-of-concept study. [Journal, year].
-[Authors]. Pipeline and results (v1.6). Zenodo. https://doi.org/[DOI]
-```
 
 ---
 
