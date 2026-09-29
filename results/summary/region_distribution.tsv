@@ -1,0 +1,6 @@
+region	n_variants	n_samples	median_vaf_pct
+protein_coding	102	35	1.54
+control_region	23	19	3.38
+MT-RNR1	5	5	1.57
+MT-RNR2	3	2	2.15
+tRNA_other	1	1	1.16

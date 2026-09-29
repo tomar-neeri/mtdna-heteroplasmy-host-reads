@@ -1,0 +1,106 @@
+# generated 2026-09-21T05:35:53Z
+## tools
+samtools 1.20
+Version: 0.7.18-r1243-dirty
+fastp 0.23.4
+Kraken version 2.1.3
+openjdk version "17.0.11-internal" 2024-04-16
+## references
+rCRS md5: 0eac45d6f4b7582ce5c8beb1358b1fd1
+human_ref: /refs/hg38.fa
+human_ref md5: b2aee9f885accc00531e59c4736bee63
+gnomad: /refs/gnomad_mt.tsv
+gnomad md5: 45a91b22ddc3c1176c103d4afee080f5
+## config
+# ---------------------------------------------------------------------------
+# mtDNA heteroplasmy pipeline — configuration
+# Deposit this file alongside results. It is the reproducibility record.
+# ---------------------------------------------------------------------------
+
+# --- paths -----------------------------------------------------------------
+raw_dir:     "/data/raw"
+scratch_dir: "/scratch"          # MUST be a fast local filesystem (ext4), not a network or 9p mount
+out_dir:     "results"
+
+r1_suffix: "_R1_001.fastq.gz"
+r2_suffix: "_R2_001.fastq.gz"
+
+# --- references ------------------------------------------------------------
+rcrs:       "/opt/refs/rCRS.fasta"      # baked into the container; do not override
+human_ref:  "/refs/hg38.fa"             # mount at runtime; must be bwa-indexed
+kraken_db:  "/db/k2_standard_08gb"
+
+# hg38 provenance (record for the methods section)
+human_ref_source: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz"
+human_ref_build:  "GRCh38/hg38, UCSC, no ALT contigs"
+
+# --- contig naming ---------------------------------------------------------
+# chrM (UCSC) | MT (Ensembl) | NC_012920.1 (GenBank)
+chrm_contig: "chrM"
+
+# --- filters ---------------------------------------------------------------
+min_mapq:        30
+min_baseq:       20
+min_depth_call:  50     # minimum position depth to attempt a call
+threads:   4          # memory scales with this; 4 fits a 13 GB cap
+
+# --- Pass 2b ---------------------------------------------------------------
+# Validation on a high-host library showed Pass 2a alone removed 96% of spurious calls.
+# Enable 2b to test whether microbial classification adds anything further.
+# Default OFF. Validation with a CORRECT taxonomic filter found only
+#   a high-host library (81% host):  8 / 42,857 reads bacterial  (0.04%)
+#   a low-host library (9.5% host): 6 / 21,058 reads bacterial  (0.06%)
+# Near-identical despite a 9-fold difference in host fraction. Bacterial and
+# mitochondrial rRNA are too diverged for short-read cross-mapping, so Pass 2a
+# alone suffices. Enable only to re-test on a new cohort.
+run_kraken: true
+kraken_exclude: "Bacteria,Archaea,Viruses"   # never filter on "unclassified":
+                                             # the standard DB contains human,
+                                             # so real mtDNA reads classify as
+                                             # Homo sapiens and would be lost
+
+# --- variant calling (downstream, notebook) --------------------------------
+vaf_floor:       0.01    # nothing below this without UMIs
+vaf_homoplasmy:  0.95
+sig_level:       0.05
+power:           0.90
+
+# --- error model (revised after validation on two contrasting libraries) -------------------
+# Fit the beta-binomial error model POOLED across all samples, never per-sample.
+# At median depth below ~200x most background positions have zero alt reads and
+# the per-sample MLE collapses alpha toward zero, producing an implausible Q59
+# error estimate and calling anything with 2 alt reads. a low-host library produced 22
+# false candidates this way; pooled fitting gives Q36 and leaves zero.
+error_model_pooled: true
+
+# Hard floor applied regardless of what the model says. Standard practice and
+# the filter that separated real signal in one library from noise in another.
+min_alt_reads: 4
+
+# Panel of normals: minimum OTHER samples required before a site-specific
+# background estimate is trusted. Below this the substitution-level rate is used.
+min_loo_samples: 3
+
+# Report callable fraction per sample, not just mean depth. that library averaged 175x
+# yet only 33.6% of its genome was callable at 3% VAF.
+report_callable_fraction: true
+callable_vaf_targets: [0.03, 0.05]
+
+# Regions masked from primary analysis
+mask_regions:
+  - [302, 315]        # poly-C tract — homopolymer artifacts
+  - [16184, 16193]    # poly-C tract
+
+# --- variant annotation (optional, for FILTERING not interpretation) -------
+# gnomAD v3.1 chrM reduced-annotations TSV (1 MiB, md5 45a91b22ddc3c1176c103d4afee080f5)
+#   https://gnomad.broadinstitute.org/downloads#v3-mitochondrial-dna
+# Its `filters` column carries gnomAD's own QC flags. Two matter here:
+#   artifact_prone_site      position gnomAD excludes as artifact-prone
+#   common_low_heteroplasmy  NUMT-misalignment false-positive site identified
+#                            across 56,434 genomes -- a call of ours here is
+#                            suspect even after Pass 2a
+# Deliberately NOT ClinVar: pathogenic mtDNA variants need 60-90% heteroplasmy
+# to produce a phenotype, so the label is misleading on a 3% call.
+gnomad_mt_table: "/refs/gnomad_mt.tsv"
+mitomap_table:   ""          # optional; MITOMAP has no clean programmatic export
+common_af:       0.001       # AF above which a call is a known polymorphism

@@ -1,0 +1,453 @@
+# ---------------------------------------------------------------------------
+# mtDNA heteroplasmy recovery from shotgun metagenomes
+#
+#   snakemake -c4 --configfile config/config.yaml
+#   snakemake -c4 --use-singularity --singularity-args "-B /data:/data"
+#   snakemake --dag | dot -Tsvg > dag.svg
+#
+# Three passes:
+#   1  recruit   all reads vs rCRS         high sensitivity
+#   2a verify    candidates vs hg38        removes NUMT-derived reads
+#   2b classify  candidates vs Kraken2     removes microbial cross-mappers
+# ---------------------------------------------------------------------------
+import os
+import re
+from pathlib import Path
+
+configfile: "config/config.yaml"
+
+SAMPLES = [Path(f).name.split(config["r1_suffix"])[0]
+           for f in sorted(Path(config["raw_dir"]).glob(f"*{config['r1_suffix']}*"))]
+if not SAMPLES:
+    raise ValueError(f"No FASTQs matching *{config['r1_suffix']}* in {config['raw_dir']}")
+
+SCRATCH = config["scratch_dir"]
+OUT     = config["out_dir"]
+CONTIG  = config["chrm_contig"]
+RUN_2B  = config.get("run_kraken", False)
+
+wildcard_constraints:
+    sample = "|".join(re.escape(s) for s in SAMPLES)
+
+
+rule all:
+    input:
+        f"{OUT}/summary/coverage_metrics.tsv",
+        f"{OUT}/summary/filtering_stats.tsv",
+        f"{OUT}/summary/heteroplasmy_summary.tsv",
+        f"{OUT}/summary/error_model.json",
+        f"{OUT}/summary/site_background.tsv",
+        f"{OUT}/summary/versions.txt",
+        f"{OUT}/summary/haplogroups.tsv",
+        f"{OUT}/summary/haplogroup_markers.tsv",
+        f"{OUT}/summary/lineage_matrix.tsv",
+        f"{OUT}/summary/variants_annotated.tsv",
+        f"{OUT}/summary/variant_recurrence.tsv",
+        expand(f"{OUT}/chrM/{{sample}}.chrM.bam", sample=SAMPLES),
+        expand(f"{OUT}/calls/{{sample}}.calls.tsv", sample=SAMPLES),
+        ([f"{OUT}/summary/pass2b_stats.tsv"] if RUN_2B else [])
+
+
+# --- 1. trimming -----------------------------------------------------------
+# Light by design: aggressive end-trimming removes the damage signal that the
+# strand-bias QC step exists to measure.
+rule trim:
+    input:
+        r1 = lambda w: f"{config['raw_dir']}/{w.sample}{config['r1_suffix']}",
+        r2 = lambda w: f"{config['raw_dir']}/{w.sample}{config['r2_suffix']}"
+    output:
+        r1   = temp(f"{SCRATCH}/{{sample}}.trim_R1.fq.gz"),
+        r2   = temp(f"{SCRATCH}/{{sample}}.trim_R2.fq.gz"),
+        json = f"{OUT}/qc/{{sample}}.fastp.json",
+        html = f"{OUT}/qc/{{sample}}.fastp.html"
+    log: f"{OUT}/logs/{{sample}}.trim.log"
+    threads: config["threads"]
+    shell:
+        """
+        fastp -i {input.r1} -I {input.r2} -o {output.r1} -O {output.r2} \
+              --detect_adapter_for_pe \
+              --qualified_quality_phred {config[min_baseq]} \
+              --unqualified_percent_limit 40 \
+              --length_required 50 \
+              --cut_tail --cut_tail_mean_quality {config[min_baseq]} \
+              --thread {threads} \
+              --json {output.json} --html {output.html} 2> {log}
+        """
+
+
+# --- 2. Pass 1: recruit ----------------------------------------------------
+# rCRS alone is correct here. Recruitment is deliberately high-sensitivity;
+# specificity is Pass 2's job. Adding NUMT/rRNA decoys only reduces volume.
+rule recruit:
+    input:
+        r1 = f"{SCRATCH}/{{sample}}.trim_R1.fq.gz",
+        r2 = f"{SCRATCH}/{{sample}}.trim_R2.fq.gz"
+    output:
+        bam = temp(f"{SCRATCH}/{{sample}}.recruit.bam"),
+        cand = temp(f"{SCRATCH}/{{sample}}.cand.bam")
+    log: f"{OUT}/logs/{{sample}}.recruit.log"
+    threads: config["threads"]
+    params:
+        rcrs = config["rcrs"]
+    shell:
+        """
+        bwa mem -t {threads} {params.rcrs} {input.r1} {input.r2} 2> {log} \
+          | samtools sort -@ 2 -m 1G -o {output.bam} 2>> {log}
+        samtools index {output.bam}
+        samtools view -b -q {config[min_mapq]} -f 2 {output.bam} chrM > {output.cand}
+        samtools index {output.cand}
+        """
+
+
+# --- 3. candidate FASTQs ---------------------------------------------------
+# NAME-SORT FIRST. samtools fastq cannot pair reads from a coordinate-sorted
+# BAM; without this R1/R2 desynchronise and bwa silently emits no alignments.
+rule candidate_fastq:
+    input:  f"{SCRATCH}/{{sample}}.cand.bam"
+    output:
+        r1 = temp(f"{SCRATCH}/{{sample}}.cand_R1.fq"),
+        r2 = temp(f"{SCRATCH}/{{sample}}.cand_R2.fq")
+    log: f"{OUT}/logs/{{sample}}.candfq.log"
+    shell:
+        """
+        samtools sort -n -o {input}.nsort {input} 2> {log}
+        samtools fastq -1 {output.r1} -2 {output.r2} \
+                       -0 /dev/null -s /dev/null -n {input}.nsort 2>> {log}
+        rm -f {input}.nsort
+        n1=$(( $(wc -l < {output.r1}) / 4 )); n2=$(( $(wc -l < {output.r2}) / 4 ))
+        [ "$n1" -eq "$n2" ] || {{ echo "R1/R2 desync: $n1 vs $n2" >&2; exit 1; }}
+        """
+
+
+# --- 4. Pass 2a: human verification ----------------------------------------
+# The decisive filter. NUMT-derived reads find their true nuclear locus once
+# the reference contains it. In validation this removed 2.7% of reads and
+# 96% of spurious heteroplasmy calls.
+rule verify_human:
+    input:
+        r1 = f"{SCRATCH}/{{sample}}.cand_R1.fq",
+        r2 = f"{SCRATCH}/{{sample}}.cand_R2.fq",
+        idx = lambda w: config["human_ref"] + ".bwt"
+    output:
+        bam  = temp(f"{SCRATCH}/{{sample}}.hverify.bam"),
+        chrm = (temp(f"{SCRATCH}/{{sample}}.chrM.pre2b.bam") if RUN_2B
+                else f"{OUT}/chrM/{{sample}}.chrM.bam"),
+        stats = f"{OUT}/qc/{{sample}}.numt_destinations.tsv"
+    log: f"{OUT}/logs/{{sample}}.verify.log"
+    threads: config["threads"]
+    params:
+        ref = config["human_ref"]
+    shell:
+        """
+        bwa mem -t {threads} {params.ref} {input.r1} {input.r2} 2> {log} \
+          | samtools sort -o {output.bam} 2>> {log}
+        samtools index {output.bam}
+        # primary alignments only: supplementary records inflate the denominator
+        samtools view -b -F 0x900 {output.bam} > {output.bam}.primary
+        samtools index {output.bam}.primary
+        samtools idxstats {output.bam}.primary | awk '$3>0' | sort -k3,3nr > {output.stats}
+        rm -f {output.bam}.primary {output.bam}.primary.bai
+        samtools view -b -q {config[min_mapq]} {output.bam} {CONTIG} > {output.chrm}
+        samtools index {output.chrm}
+        n=$(samtools view -c {output.chrm})
+        [ "$n" -gt 0 ] || {{ echo "Pass 2a produced 0 reads — check memory and reference" >&2; exit 1; }}
+        """
+
+
+# --- 5. Pass 2b: microbial classification (OPTIONAL, default OFF) ----------
+# Validation: with a CORRECT taxonomic filter only 8/42,857 reads (high-host) and
+# 6/21,058 (low-host) are bacterial, despite the latter being 90.5% microbial as a sample.
+# Bacterial and mitochondrial rRNA have diverged far beyond what a short-read
+# aligner will match, so Pass 2a alone suffices. Enable only to re-test.
+#
+# NOTE: never filter on "unclassified" — the standard Kraken2 DB contains the
+# human genome, so real mtDNA reads classify as Homo sapiens.
+if RUN_2B:
+    rule verify_microbial:
+        input:
+            bam = f"{SCRATCH}/{{sample}}.chrM.pre2b.bam"
+        output:
+            bam    = f"{OUT}/chrM/{{sample}}.chrM.bam",
+            report = f"{OUT}/qc/{{sample}}.kraken_report.txt"
+        log: f"{OUT}/logs/{{sample}}.kraken.log"
+        threads: config["threads"]
+        params:
+            db = config["kraken_db"],
+            exclude = config.get("kraken_exclude", "Bacteria,Archaea,Viruses")
+        shell:
+            """
+            samtools sort -n -o {input.bam}.ns {input.bam} 2>> {log}
+            samtools fastq -1 {input.bam}.R1 -2 {input.bam}.R2 \
+                           -0 /dev/null -s /dev/null -n {input.bam}.ns 2>> {log}
+            kraken2 --db {params.db} --threads {threads} --paired \
+                    --report {output.report} --output {input.bam}.kout \
+                    {input.bam}.R1 {input.bam}.R2 >/dev/null 2>> {log}
+            python3 /opt/scripts/kraken_filter.py \
+                    --kraken-out {input.bam}.kout --report {output.report} \
+                    --bam {input.bam} --out {output.bam} 2>> {log}
+            rm -f {input.bam}.ns {input.bam}.R1 {input.bam}.R2 {input.bam}.kout
+            """
+
+
+# --- 5b. Pass 2b removal statistics ----------------------------------------
+if RUN_2B:
+    rule kraken_stats:
+        input:
+            pre  = expand(f"{SCRATCH}/{{sample}}.chrM.pre2b.bam", sample=SAMPLES),
+            post = expand(f"{OUT}/chrM/{{sample}}.chrM.bam", sample=SAMPLES),
+            rep  = expand(f"{OUT}/qc/{{sample}}.kraken_report.txt", sample=SAMPLES)
+        output: f"{OUT}/summary/pass2b_stats.tsv"
+        run:
+            import subprocess, csv, os
+            def n(b): return int(subprocess.run(["samtools","view","-c",b],
+                                 capture_output=True,text=True).stdout.strip() or 0)
+            with open(output[0],"w",newline="") as fh:
+                w=csv.writer(fh,delimiter="\t")
+                w.writerow(["sample","reads_pre2b","reads_post2b","removed",
+                            "pct_removed","bacteria_reads","eukaryota_reads"])
+                for pre,post,rep in zip(input.pre,input.post,input.rep):
+                    s=os.path.basename(post).split(".chrM.bam")[0]
+                    a,b=n(pre),n(post)
+                    bact=euk=0
+                    for line in open(rep):
+                        f=line.rstrip("\n").split("\t")
+                        if len(f)>=6 and f[3]=="D":
+                            if "Bacteria" in f[5]: bact=int(f[1])
+                            elif "Eukaryota" in f[5]: euk=int(f[1])
+                    w.writerow([s,a,b,a-b,f"{(a-b)/a:.5f}" if a else "0",bact,euk])
+
+
+# --- 6. per-sample metrics -------------------------------------------------
+rule coverage:
+    input:  f"{OUT}/chrM/{{sample}}.chrM.bam"
+    output: f"{OUT}/qc/{{sample}}.coverage.tsv"
+    shell:
+        """
+        samtools depth -a -Q {config[min_mapq]} {input} \
+          | awk -v s={wildcards.sample} 'BEGIN{{OFS="\\t"}}
+              {{t+=$3; n++; if($3>=50)b50++; if($3>=100)b100++; if($3>=500)b500++}}
+              END{{print s, t/16569, b50/16569, b100/16569, b500/16569, 16569-n}}' \
+          > {output}
+        """
+
+
+# --- 6b. pooled error model (cohort-level, not per-sample) -----------------
+# The error rate is a property of the chemistry, not of a sample. Per-sample
+# fitting collapses below ~200x median depth: a low-host library fitted Q59 (impossible)
+# and produced 22 false calls; pooled with 398 it gives Q36 and zero.
+rule error_model:
+    input:  expand(f"{OUT}/chrM/{{sample}}.chrM.bam", sample=SAMPLES)
+    output: f"{OUT}/summary/error_model.json"
+    log:    f"{OUT}/logs/error_model.log"
+    shell:
+        """
+        python3 /opt/scripts/pooled_error_model.py \
+            --bams {input} --ref {config[rcrs]} --out {output} \
+            --contig {CONTIG} --min-depth {config[min_depth_call]} \
+            --min-baseq {config[min_baseq]} --min-mapq {config[min_mapq]} 2> {log}
+        """
+
+
+# --- 6b2. panel of normals (cohort-level) ----------------------------------
+# A global or per-substitution rate cannot describe a position whose LOCAL error
+# rate is elevated: background is defined as VAF < 0.5%, so the fitted rate is
+# capped at 0.005 by construction, and a site whose true error is ~1.5% is
+# excluded from the fit as a variant then clears the threshold as a variant.
+# Observed in batch 1: m.6438T>A in 8/11 samples at ~1.5%, m.7549T>A in 6/11.
+# This table lets the caller estimate each site's background from the OTHER
+# samples (leave-one-out), which is what actually separates hotspots from
+# private heteroplasmy.
+rule site_background:
+    input:  expand(f"{OUT}/chrM/{{sample}}.chrM.bam", sample=SAMPLES)
+    output: f"{OUT}/summary/site_background.tsv"
+    log:    f"{OUT}/logs/site_background.log"
+    shell:
+        """
+        python3 /opt/scripts/site_background.py \
+            --bams {input} --ref {config[rcrs]} --out {output} \
+            --contig {CONTIG} --min-depth {config[min_depth_call]} \
+            --min-baseq {config[min_baseq]} --min-mapq {config[min_mapq]} \
+            --detect-vaf {config[vaf_floor]} 2>&1 | tee {log}
+        """
+
+
+# --- 6c. heteroplasmy calling ----------------------------------------------
+rule call_heteroplasmy:
+    input:
+        bam     = f"{OUT}/chrM/{{sample}}.chrM.bam",
+        model   = f"{OUT}/summary/error_model.json",
+        site_bg = f"{OUT}/summary/site_background.tsv"
+    output:
+        calls   = f"{OUT}/calls/{{sample}}.calls.tsv",
+        summary = f"{OUT}/calls/{{sample}}.summary.json"
+    log: f"{OUT}/logs/{{sample}}.call.log"
+    shell:
+        """
+        python3 /opt/scripts/call_heteroplasmy.py \
+            --bam {input.bam} --ref {config[rcrs]} --model {input.model} \
+            --site-background {input.site_bg} \
+            --min-loo-samples {config[min_loo_samples]} \
+            --out {output.calls} --summary {output.summary} \
+            --contig {CONTIG} --min-depth {config[min_depth_call]} \
+            --min-baseq {config[min_baseq]} --min-mapq {config[min_mapq]} \
+            --min-alt-reads {config[min_alt_reads]} \
+            --vaf-floor {config[vaf_floor]} \
+            --vaf-homoplasmy {config[vaf_homoplasmy]} \
+            --sig-level {config[sig_level]} 2> {log}
+        """
+
+
+# --- 7. aggregation --------------------------------------------------------
+rule summarise_coverage:
+    input:  expand(f"{OUT}/qc/{{sample}}.coverage.tsv", sample=SAMPLES)
+    output: f"{OUT}/summary/coverage_metrics.tsv"
+    shell:
+        """
+        printf 'sample\\tmean_depth\\tbreadth_50x\\tbreadth_100x\\tbreadth_500x\\tzero_cov_bases\\n' > {output}
+        cat {input} >> {output}
+        """
+
+rule summarise_filtering:
+    input:
+        numt = expand(f"{OUT}/qc/{{sample}}.numt_destinations.tsv", sample=SAMPLES)
+    output: f"{OUT}/summary/filtering_stats.tsv"
+    run:
+        import csv
+        with open(output[0], "w", newline="") as fh:
+            w = csv.writer(fh, delimiter="\t")
+            w.writerow(["sample", "chrM_reads", "relocated_reads", "pct_numt", "top_locus"])
+            for f in input.numt:
+                s = Path(f).name.split(".numt")[0]
+                rows = [l.split("\t") for l in open(f) if l.strip()]
+                chrm = sum(int(r[2]) for r in rows if r[0] == CONTIG)
+                other = [(r[0], int(r[2])) for r in rows if r[0] != CONTIG]
+                reloc = sum(v for _, v in other)
+                top = max(other, key=lambda x: x[1])[0] if other else "-"
+                tot = chrm + reloc
+                w.writerow([s, chrm, reloc, f"{reloc/tot:.4f}" if tot else "0", top])
+
+
+rule summarise_heteroplasmy:
+    input:  expand(f"{OUT}/calls/{{sample}}.summary.json", sample=SAMPLES)
+    output: f"{OUT}/summary/heteroplasmy_summary.tsv"
+    run:
+        import json, csv
+        keys = ["sample","mean_depth","median_depth","error_model_phred",
+                "n_homoplasmic","n_heteroplasmic_raw","n_heteroplasmic_pass"]
+        with open(output[0],"w",newline="") as fh:
+            w=csv.writer(fh,delimiter="\t")
+            w.writerow(keys+["callable_3pct","callable_5pct"])
+            for f in input:
+                d=json.load(open(f))
+                cf=d.get("callable_fraction_at_vaf",{})
+                w.writerow([d.get(k) for k in keys]+
+                           [cf.get("3%"), cf.get("5%")])
+
+
+# --- 7b. haplogroup assignment and lineage flagging ------------------------
+# v1.6: markers are typed directly from the final chrM BAMs (>=10 reads,
+# major allele >=0.80), so "rCRS base" and "not covered" are no longer
+# confused. Samples whose markers are uncovered or conflicting are reported
+# as "unassigned" instead of defaulting to R. Per-marker states, depths and
+# allele fractions go to haplogroup_markers.tsv (mixture check).
+#
+# Lineage flagging is unchanged: haplogroup-defining positions have mutated
+# repeatedly across the phylogeny, so low-VAF calls there are flagged, not
+# deleted.
+rule haplogroup:
+    input:
+        calls = expand(f"{OUT}/calls/{{sample}}.calls.tsv", sample=SAMPLES),
+        bams  = expand(f"{OUT}/chrM/{{sample}}.chrM.bam", sample=SAMPLES)
+    output:
+        hg      = f"{OUT}/summary/haplogroups.tsv",
+        markers = f"{OUT}/summary/haplogroup_markers.tsv",
+        flags   = f"{OUT}/summary/heteroplasmy_lineage_flags.tsv"
+    log: f"{OUT}/logs/haplogroup.log"
+    shell:
+        """
+        python3 /opt/scripts/haplogroup.py \
+            --calls {OUT}/calls --bams {input.bams} --out-dir {OUT}/summary \
+            --contig {CONTIG} \
+            --min-baseq {config[min_baseq]} --min-mapq {config[min_mapq]} \
+            --min-depth-call {config[min_depth_call]} \
+            --vaf-homoplasmy {config[vaf_homoplasmy]} 2>&1 | tee {log}
+        """
+
+
+# --- 7c. heteroplasmic calls vs the cohort homoplasmic landscape -----------
+# For each heteroplasmic call: how many samples carry the position
+# homoplasmically, and are they in the caller's own macrohaplogroup?
+# v1.6: arguments now match lineage_matrix.py (--out, single output file);
+# v1.5 passed --out-dir, which the script does not accept.
+rule lineage_matrix:
+    input:
+        calls = expand(f"{OUT}/calls/{{sample}}.calls.tsv", sample=SAMPLES),
+        hg    = f"{OUT}/summary/haplogroups.tsv"
+    output:
+        f"{OUT}/summary/lineage_matrix.tsv"
+    log: f"{OUT}/logs/lineage_matrix.log"
+    shell:
+        """
+        python3 /opt/scripts/lineage_matrix.py \
+            --calls {OUT}/calls --haplogroups {input.hg} \
+            --out {output} \
+            --vaf-homoplasmy {config[vaf_homoplasmy]} 2>&1 | tee {log}
+        """
+
+
+rule collect_variants:
+    input:
+        calls = expand(f"{OUT}/calls/{{sample}}.calls.tsv", sample=SAMPLES),
+        summ  = expand(f"{OUT}/calls/{{sample}}.summary.json", sample=SAMPLES),
+        flags = f"{OUT}/summary/heteroplasmy_lineage_flags.tsv"
+    output:
+        ann = f"{OUT}/summary/variants_annotated.tsv",
+        rec = f"{OUT}/summary/variant_recurrence.tsv",
+        het = f"{OUT}/summary/heteroplasmic_variants.tsv",
+        hom = f"{OUT}/summary/homoplasmic_variants.tsv",
+        reg = f"{OUT}/summary/region_distribution.tsv",
+        ovw = f"{OUT}/summary/cohort_overview.tsv"
+    log: f"{OUT}/logs/collect_variants.log"
+    params:
+        gnomad  = lambda w: (f"--gnomad {config['gnomad_mt_table']}"
+                             if config.get("gnomad_mt_table") else ""),
+        mitomap = lambda w: (f"--mitomap {config['mitomap_table']}"
+                             if config.get("mitomap_table") else "")
+    shell:
+        """
+        python3 /opt/scripts/collect_variants.py \
+            --calls {OUT}/calls --ref {config[rcrs]} \
+            --outdir {OUT}/summary \
+            --common-af {config[common_af]} \
+            --lineage-flags {input.flags} \
+            {params.gnomad} {params.mitomap} 2>&1 | tee {log}
+        """
+
+
+# --- 8. provenance ---------------------------------------------------------
+rule versions:
+    output: f"{OUT}/summary/versions.txt"
+    shell:
+        """
+        # `| head -1` closes the pipe early; under bash strict mode the SIGPIPE
+        # from the upstream tool aborts the whole rule. Disable pipefail here.
+        set +o pipefail
+        {{
+          echo "# generated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "## tools"
+          samtools --version 2>&1 | head -1 || true
+          bwa 2>&1 | grep -i "^Version" | head -1 || true
+          fastp --version 2>&1 | head -1 || true
+          kraken2 --version 2>&1 | head -1 || true
+          java -version 2>&1 | head -1 || true
+          echo "## references"
+          echo "rCRS md5: $(md5sum {config[rcrs]} 2>/dev/null | cut -d' ' -f1 || echo NA)"
+          echo "human_ref: {config[human_ref]}"
+          echo "human_ref md5: $(md5sum {config[human_ref]} 2>/dev/null | cut -d' ' -f1 || echo NA)"
+          echo "gnomad: {config[gnomad_mt_table]}"
+          echo "gnomad md5: $(md5sum {config[gnomad_mt_table]} 2>/dev/null | cut -d' ' -f1 || echo NA)"
+          echo "## config"
+          cat config/config.yaml
+        }} > {output} 2>/dev/null
+        touch {output}
+        """

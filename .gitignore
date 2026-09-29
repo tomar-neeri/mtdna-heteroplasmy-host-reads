@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Never commit: sequence data and anything identifying
+# ---------------------------------------------------------------------------
+*.bam
+*.bam.bai
+*.cram
+*.crai
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.sam
+
+# Per-participant tables — mitochondrial haplotypes are identifying data.
+# Release only under the consent and approval that cover individual-level data.
+results/summary/haplogroups.tsv
+results/summary/haplogroup_markers.tsv
+results/summary/heteroplasmy_lineage_flags.tsv
+results/summary/lineage_matrix.tsv
+results/summary/variants_annotated.tsv
+results/summary/heteroplasmic_variants.tsv
+results/summary/homoplasmic_variants.tsv
+results/summary/coverage_metrics.tsv
+results/summary/heteroplasmy_summary.tsv
+results/summary/filtering_stats.tsv
+results/summary/pass2b_stats.tsv
+results/summary/pre_v1.6_*/
+results/calls/
+results/chrM/
+results/qc/
+results/logs/
+
+# ---------------------------------------------------------------------------
+# Too large / not ours to redistribute
+# ---------------------------------------------------------------------------
+*.fa
+*.fasta
+*.fa.gz
+*.fasta.gz
+*.bwt
+*.pac
+*.sa
+*.ann
+*.amb
+ref/
+refs/
+db/
+k2_*/
+*.tar
+*.tar.gz
+gnomad_mt.tsv
+
+# ---------------------------------------------------------------------------
+# Scratch and local state
+# ---------------------------------------------------------------------------
+.snakemake/
+scratch/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+*.swp
+*.zip
+*.zip.sha256
+figures/
+results/summary/cohort_overview.tsv

@@ -1,0 +1,28 @@
+[33m77f2be4[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Pipeline and cohort-level results (v1.6)
+ .gitignore                                    |    67 [32m+[m
+ LICENSE                                       |    27 [32m+[m
+ README.md                                     |   191 [32m+[m
+ code/CONTAINERIZATION.md                      |   191 [32m+[m
+ code/Dockerfile                               |    87 [32m+[m
+ code/Snakefile                                |   453 [32m+[m
+ code/call_heteroplasmy.py                     |   257 [32m+[m
+ code/cohort.sh                                |   225 [32m+[m
+ code/collect_variants.py                      |   378 [32m+[m
+ code/collect_variants.sh                      |   134 [32m+[m
+ code/config.yaml                              |    92 [32m+[m
+ code/haplogroup.py                            |   320 [32m+[m
+ code/kraken_filter.py                         |    91 [32m+[m
+ code/lineage_matrix.py                        |   106 [32m+[m
+ code/manage.sh                                |   226 [32m+[m
+ code/mtdna.yaml                               |    23 [32m+[m
+ code/plot_haplogroups.py                      |   131 [32m+[m
+ code/pooled_error_model.py                    |   225 [32m+[m
+ code/rerun_haplogroups.sh                     |    69 [32m+[m
+ code/run_container.sh                         |   169 [32m+[m
+ code/site_background.py                       |   136 [32m+[m
+ results/summary/error_model.json              |   313 [32m+[m
+ results/summary/region_distribution.tsv       |     6 [32m+[m
+ results/summary/site_background.tsv           | 42363 [32m+++++++++++++++++++++++++++++++++++++++++++++++++[m
+ results/summary/variant_recurrence_cohort.tsv |   110 [32m+[m
+ results/summary/versions.txt                  |   106 [32m+[m
+ 26 files changed, 46496 insertions(+)
