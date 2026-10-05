@@ -30,6 +30,21 @@ results/chrM/
 results/qc/
 results/logs/
 
+# Added 2026-10: tables that link sample identifiers to genotype.
+# cohort_overview.tsv is one row per participant.
+# variant_recurrence.tsv carries a comma-joined list of carrying samples,
+# which links participants to variants exactly as variants_annotated.tsv does.
+results/summary/cohort_overview.tsv
+results/summary/variant_recurrence.tsv
+
+# NUMT ablation. Cohort-level comparison tables are released; the per-sample
+# arm outputs are a second individual-level call set and are not.
+results/summary/numt_ablation_per_sample.tsv
+results/summary/refit/*
+results/summary/fixed/*
+!results/summary/refit/error_model.json
+!results/summary/fixed/error_model.json
+
 # ---------------------------------------------------------------------------
 # Too large / not ours to redistribute
 # ---------------------------------------------------------------------------
@@ -63,5 +78,3 @@ Thumbs.db
 *.swp
 *.zip
 *.zip.sha256
-figures/
-results/summary/cohort_overview.tsv
