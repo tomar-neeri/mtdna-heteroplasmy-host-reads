@@ -248,9 +248,9 @@ is identical.
 If you use this pipeline, please cite the manuscript and this deposit.
 
 ```
-[Authors]. Repurposing shotgun metagenomic human host reads for mitochondrial
-heteroplasmy detection. [Journal, year].
-[Authors]. Pipeline and results (v1.7). Zenodo. https://doi.org/[DOI]
+[SS Tomar, Krishna Khairnar]. Repurposing shotgun metagenomic human host reads for mitochondrial
+heteroplasmy detection. [2026].
+[SS Tomar, Krishna Khairnar]. Pipeline and results (v1.7). Zenodo. https://doi.org/[DOI]
 ```
 
 ---
