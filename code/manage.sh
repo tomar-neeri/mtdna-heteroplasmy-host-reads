@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # manage.sh — update the pipeline and keep disk usage under control
-#
-#   bash manage.sh status              what is installed, what disk is used
-#   bash manage.sh update              stage new files, back up old, rebuild
-#   bash manage.sh clean               reclaim scratch, old images, old backups
-#   bash manage.sh archive             snapshot current results, then clean
-#
-# Files are picked up from STAGE (default: the project root plus Windows
-# Downloads). Download into either and run `update`; it sorts them into the
-# right subfolders, versions what it replaces, and rebuilds the image.
-# ---------------------------------------------------------------------------
 set -uo pipefail
 
 SRC="${SRC:-/mnt/d/Cancer_microbiome/Pipeline_container}"
