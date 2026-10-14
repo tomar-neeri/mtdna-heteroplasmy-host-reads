@@ -37,15 +37,6 @@ filters AND the major allele is >= --min-major-af of them. Below that fraction
 the marker is "mixed", reported separately, because intermediate fractions at
 lineage markers are the signature of sample mixture.
 
-WHY NOT HAPLOGREP3
-HaploGrep3 downloads PhyloTree on first use and fails silently offline. The
-macrohaplogroup needs only these 11 stable markers. Subclades are not attempted.
-
-WHY LINEAGE POSITIONS MATTER
-Haplogroup-defining positions have mutated repeatedly across the phylogeny, so
-a low-VAF call there is more likely recurrent mutation than private
-heteroplasmy. Such calls are FLAGGED, not removed.
-
 Usage:
   haplogroup.py --calls results/calls --bams results/chrM/*.chrM.bam \\
                 --out-dir results/summary
