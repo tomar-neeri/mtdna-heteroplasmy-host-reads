@@ -11,9 +11,7 @@
 #   bash numt_ablation.sh export    copy results to EXPORT_DIR
 #
 # SAFETY
-# Separate work dir, scratch dir and container name from the main run. The
-# published results in ~/mtdna-cohort47 are mounted READ-ONLY and are never
-# written to. Nothing here can overwrite them.
+# Separate work dir, scratch dir and container name from the main run.
 #
 # Requires a completed baseline run: reuses its error_model.json,
 # site_background.tsv, heteroplasmy_lineage_flags.tsv and
