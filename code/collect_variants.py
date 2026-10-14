@@ -14,16 +14,6 @@ Recurrence matters: genuine heteroplasmy is largely private to an individual.
 A position appearing in several samples is either haplogroup-linked leakage or
 a systematic artifact, and is flagged as such.
 
-Optional annotation against static reference tables (--mitomap, --gnomad):
-these are used for FILTERING, not clinical interpretation. A call at 3% VAF
-that is also a known population polymorphism is more likely lineage leakage or
-a mutational hotspot than private heteroplasmy.
-
-Deliberately NOT annotated against ClinVar as a primary field. Pathogenic mtDNA
-variants generally require 60-90% heteroplasmy to produce a phenotype, so a
-"pathogenic" label on a 3% call is accurate and substantively misleading.
-Population frequency is the useful signal at these levels.
-
 Usage:
   collect_variants.py --calls results/calls --ref rCRS.fasta --outdir results/summary
   collect_variants.py ... --mitomap mitomap_polymorphisms.tsv --gnomad gnomad_mt.tsv
