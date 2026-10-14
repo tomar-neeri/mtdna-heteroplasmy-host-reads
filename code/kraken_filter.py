@@ -9,10 +9,6 @@ so genuine mitochondrial reads are classified as Homo sapiens. A naive
 Observed directly: 39,409 of 42,857 reads removed from a high-host library, top taxon
 Homo sapiens.
 
-Validation result: with a correct taxonomic filter, only 8/42,857 reads in
-a high-host library and 6/21,058 in a low-host library are bacterial, despite the latter being 90.5%
-microbial as a sample. Pass 2b is therefore optional and off by default.
-
 Usage:
   kraken_filter.py --kraken-out k.out --report k.report --bam in.bam --out out.bam
 """
