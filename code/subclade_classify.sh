@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# subclade_classify.sh — terminal haplogroup classification (supplementary)
 #
 # The primary analysis assigns macrohaplogroups with haplogroup.py, which runs
 # offline from an embedded marker set. This answers a different question: how
@@ -26,8 +25,7 @@
 #   cohort.hsd    classifier input
 #   deep_<tree>.txt   HaploGrep3 extended report
 #
-# These are per-participant haplotypes. Treat them as individual-level data and
-# keep them out of version control.
+# These are per-participant haplotypes.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
