@@ -1,13 +1,7 @@
 # syntax=docker/dockerfile:1
 # ---------------------------------------------------------------------------
 # mtDNA heteroplasmy recovery from shotgun metagenomes
-#
-#   docker build -t mtdna-pipeline:1.0.0 .
-#   docker run --rm -v $PWD:/work -w /work mtdna-pipeline:1.0.0 snakemake -c4
-#
-# Every version is pinned. Rebuilding this file in five years produces the
-# same image, which is the entire point.
-# ---------------------------------------------------------------------------
+
 FROM mambaorg/micromamba:1.5.8-jammy
 
 LABEL org.opencontainers.image.title="mtdna-pipeline"
