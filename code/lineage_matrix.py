@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
 """
-Cross-tabulate heteroplasmic calls against the cohort's homoplasmic landscape.
-
-THE QUESTION
-A low-VAF call at a position that is homoplasmic (i.e. lineage-defining) in
-other samples is ambiguous: it could be private heteroplasmy, or leakage of a
-lineage marker. A low-VAF call at a position homoplasmic in nobody is
-unambiguously private.
-
-This builds the mapping directly: for every heteroplasmic call, how many cohort
-samples carry that position homoplasmically, and are those samples in the same
-macrohaplogroup as the caller?
-
 INTERPRETATION
   homoplasmic in 0 samples        -> private; lineage plays no part
   homoplasmic within own group    -> possible lineage leakage; inspect
