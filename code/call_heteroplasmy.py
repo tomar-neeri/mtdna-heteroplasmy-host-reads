@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 """
 Call heteroplasmy against a POOLED error model, with a hard alt-read floor.
-
-Two filters do the work:
-  - significance against the pooled beta-binomial null
-  - min_alt_reads, applied regardless of what the model says
-
-The floor is not redundant. It is what separated real signal in a high-host library
-(4 candidates surviving >=5 alt reads) from noise in a low-host library (0 surviving,
-though a per-sample model had reported 22).
-
-Also reports callable fraction, because mean depth misleads: a low-host library
-averaged 175x yet only 33.6% of its genome was callable at 3% VAF.
-
-Usage:
-  call_heteroplasmy.py --bam s.bam --ref rCRS.fasta --model model.json \
-                       --out s.calls.tsv --summary s.summary.json
 """
 import argparse, csv, json, os, sys
 import numpy as np
